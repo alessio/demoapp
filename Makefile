@@ -63,6 +63,8 @@ build:
 	mkdir -p build/
 	go build -mod=readonly $(BUILD_FLAGS) \
         -o build/ ./cmd/demoappd
+	go build -mod=readonly $(BUILD_FLAGS) \
+        -o build/ ./cmd/demoappcli
 
 
 .PHONY: all build
