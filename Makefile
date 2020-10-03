@@ -4,7 +4,6 @@ VERSION := $(shell echo $(shell git describe --always) | sed 's/^v//')
 COMMIT := $(shell git log -1 --format='%H')
 LEDGER_ENABLED ?= true
 BINDIR ?= $(GOPATH)/bin
-BUILDDIR ?= $(CURDIR)/build
 
 all: build
 
@@ -62,7 +61,6 @@ endif
 BUILD_TARGETS = build install
 
 $(BUILD_TARGETS):
-	mkdir -p build/
 	go $@ -mod=readonly $(BUILD_FLAGS) ./cmd/demoappd
 	go $@ -mod=readonly $(BUILD_FLAGS) ./cmd/demoappcli
 
