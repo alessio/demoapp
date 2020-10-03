@@ -59,12 +59,12 @@ ifeq (,$(findstring nostrip,$(COSMOS_BUILD_OPTIONS)))
   BUILD_FLAGS += -trimpath
 endif
 
-build:
+BUILD_TARGETS = build install
+
+$(BUILD_TARGETS):
 	mkdir -p build/
-	go build -mod=readonly $(BUILD_FLAGS) \
-        -o build/ ./cmd/demoappd
-	go build -mod=readonly $(BUILD_FLAGS) \
-        -o build/ ./cmd/demoappcli
+	go $@ -mod=readonly $(BUILD_FLAGS) ./cmd/demoappd
+	go $@ -mod=readonly $(BUILD_FLAGS) ./cmd/demoappcli
 
 
-.PHONY: all build
+.PHONY: all $(BUILD_TARGETS)
