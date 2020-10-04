@@ -10,6 +10,9 @@ import (
 	tmos "github.com/tendermint/tendermint/libs/os"
 	dbm "github.com/tendermint/tm-db"
 
+	"github.com/alessio/demoapp/x/demoapp"
+	demoappkeeper "github.com/alessio/demoapp/x/demoapp/keeper"
+	demoapptypes "github.com/alessio/demoapp/x/demoapp/types"
 	bam "github.com/cosmos/cosmos-sdk/baseapp"
 	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/simapp"
@@ -18,36 +21,46 @@ import (
 	"github.com/cosmos/cosmos-sdk/version"
 	"github.com/cosmos/cosmos-sdk/x/auth"
 	"github.com/cosmos/cosmos-sdk/x/bank"
+	"github.com/cosmos/cosmos-sdk/x/distribution"
 	"github.com/cosmos/cosmos-sdk/x/genutil"
+	"github.com/cosmos/cosmos-sdk/x/gov"
+	"github.com/cosmos/cosmos-sdk/x/mint"
 	"github.com/cosmos/cosmos-sdk/x/params"
+	paramsclient "github.com/cosmos/cosmos-sdk/x/params/client"
 	"github.com/cosmos/cosmos-sdk/x/staking"
 	"github.com/cosmos/cosmos-sdk/x/supply"
-	"github.com/alessio/demoapp/x/demoapp"
-	demoappkeeper "github.com/alessio/demoapp/x/demoapp/keeper"
-	demoapptypes "github.com/alessio/demoapp/x/demoapp/types"
-  // this line is used by starport scaffolding # 1
+	"github.com/cosmos/cosmos-sdk/x/upgrade"
+	upgradeclient "github.com/cosmos/cosmos-sdk/x/upgrade/client"
+	// this line is used by starport scaffolding # 1
 )
 
 const appName = "demoapp"
 
 var (
-	DefaultCLIHome = os.ExpandEnv("$HOME/.demoappcli")
+	DefaultCLIHome  = os.ExpandEnv("$HOME/.demoappcli")
 	DefaultNodeHome = os.ExpandEnv("$HOME/.demoappd")
-	ModuleBasics = module.NewBasicManager(
+	ModuleBasics    = module.NewBasicManager(
 		genutil.AppModuleBasic{},
 		auth.AppModuleBasic{},
 		bank.AppModuleBasic{},
 		staking.AppModuleBasic{},
+		mint.AppModuleBasic{},
+		distribution.AppModuleBasic{},
+		gov.NewAppModuleBasic(paramsclient.ProposalHandler, distribution.ProposalHandler, upgradeclient.ProposalHandler),
 		params.AppModuleBasic{},
 		supply.AppModuleBasic{},
 		demoapp.AppModuleBasic{},
-    // this line is used by starport scaffolding # 2
+		upgrade.AppModuleBasic{},
+		// this line is used by starport scaffolding # 2
 	)
 
 	maccPerms = map[string][]string{
 		auth.FeeCollectorName:     nil,
+		distribution.ModuleName:   nil,
+		mint.ModuleName:           {supply.Minter},
 		staking.BondedPoolName:    {supply.Burner, supply.Staking},
 		staking.NotBondedPoolName: {supply.Burner, supply.Staking},
+		gov.ModuleName:            {supply.Burner},
 	}
 )
 
@@ -72,13 +85,16 @@ type NewApp struct {
 
 	subspaces map[string]params.Subspace
 
-	accountKeeper  auth.AccountKeeper
-	bankKeeper     bank.Keeper
-	stakingKeeper  staking.Keeper
-	supplyKeeper   supply.Keeper
-	paramsKeeper   params.Keeper
+	accountKeeper auth.AccountKeeper
+	bankKeeper    bank.Keeper
+	distrKeeper   distribution.Keeper
+	mintKeeper    mint.Keeper
+	stakingKeeper staking.Keeper
+	supplyKeeper  supply.Keeper
+	paramsKeeper  params.Keeper
 	demoappKeeper demoappkeeper.Keeper
-  // this line is used by starport scaffolding # 3
+	upgradeKeeper upgrade.Keeper
+	// this line is used by starport scaffolding # 3
 	mm *module.Manager
 
 	sm *module.SimulationManager
@@ -97,14 +113,18 @@ func NewInitApp(
 	bApp.SetAppVersion(version.Version)
 
 	keys := sdk.NewKVStoreKeys(
-    bam.MainStoreKey,
-    auth.StoreKey,
-    staking.StoreKey,
+		bam.MainStoreKey,
+		auth.StoreKey,
+		mint.StoreKey,
+		distribution.StoreKey,
+		gov.StoreKey,
+		staking.StoreKey,
 		supply.StoreKey,
-    params.StoreKey,
-    demoapptypes.StoreKey,
-    // this line is used by starport scaffolding # 5
-  )
+		params.StoreKey,
+		demoapptypes.StoreKey,
+		upgrade.StoreKey,
+		// this line is used by starport scaffolding # 5
+	)
 
 	tKeys := sdk.NewTransientStoreKeys(staking.TStoreKey, params.TStoreKey)
 
@@ -121,6 +141,9 @@ func NewInitApp(
 	app.subspaces[auth.ModuleName] = app.paramsKeeper.Subspace(auth.DefaultParamspace)
 	app.subspaces[bank.ModuleName] = app.paramsKeeper.Subspace(bank.DefaultParamspace)
 	app.subspaces[staking.ModuleName] = app.paramsKeeper.Subspace(staking.DefaultParamspace)
+	app.subspaces[mint.ModuleName] = app.paramsKeeper.Subspace(mint.DefaultParamspace)
+	app.subspaces[distribution.ModuleName] = app.paramsKeeper.Subspace(distribution.DefaultParamspace)
+	app.subspaces[gov.ModuleName] = app.paramsKeeper.Subspace(gov.DefaultParamspace).WithKeyTable(gov.ParamKeyTable())
 
 	app.accountKeeper = auth.NewAccountKeeper(
 		app.cdc,
@@ -150,6 +173,25 @@ func NewInitApp(
 		app.subspaces[staking.ModuleName],
 	)
 
+	app.mintKeeper = mint.NewKeeper(
+		app.cdc,
+		keys[mint.StoreKey],
+		app.subspaces[mint.ModuleName],
+		&stakingKeeper,
+		app.supplyKeeper,
+		auth.FeeCollectorName,
+	)
+
+	app.distrKeeper = distribution.NewKeeper(
+		app.cdc,
+		keys[distribution.StoreKey],
+		app.subspaces[distribution.ModuleName],
+		&stakingKeeper,
+		app.supplyKeeper,
+		auth.FeeCollectorName,
+		app.ModuleAccountAddrs(),
+	)
+
 	app.stakingKeeper = *stakingKeeper.SetHooks(
 		staking.NewMultiStakingHooks(),
 	)
@@ -160,7 +202,9 @@ func NewInitApp(
 		keys[demoapptypes.StoreKey],
 	)
 
-  // this line is used by starport scaffolding # 4
+	app.upgradeKeeper = upgrade.NewKeeper(map[int64]bool{}, keys[upgrade.StoreKey], app.cdc)
+
+	// this line is used by starport scaffolding # 4
 
 	app.mm = module.NewManager(
 		genutil.NewAppModule(app.accountKeeper, app.stakingKeeper, app.BaseApp.DeliverTx),
@@ -169,7 +213,7 @@ func NewInitApp(
 		supply.NewAppModule(app.supplyKeeper, app.accountKeeper),
 		demoapp.NewAppModule(app.demoappKeeper, app.bankKeeper),
 		staking.NewAppModule(app.stakingKeeper, app.accountKeeper, app.supplyKeeper),
-    // this line is used by starport scaffolding # 6
+		// this line is used by starport scaffolding # 6
 	)
 
 	app.mm.SetOrderEndBlockers(staking.ModuleName)
@@ -181,7 +225,7 @@ func NewInitApp(
 		demoapptypes.ModuleName,
 		supply.ModuleName,
 		genutil.ModuleName,
-    // this line is used by starport scaffolding # 7
+		// this line is used by starport scaffolding # 7
 	)
 
 	app.mm.RegisterRoutes(app.Router(), app.QueryRouter())
